@@ -1,0 +1,727 @@
+//32E38751D63A96047B8A8630B04EB889D9
+//On 10/19/2018, iah-myrona signed this file.
+Program CHB_ACADEMY_CHITTAGONG_LOGGING;
+
+// ************************************************************************/
+// SCRIPT:		CHB_IMPORT_ACADEMY_MASS_LOG_VERSION_CHITTAGONG
+// SYSTEM:		IMPORT
+// DESC:		Populates the Shiplog and Shipment Reference screens for Academy
+//				ocean shipments, of the Chittagong variety.
+// LIMITS:		UNKNOWN
+// SCRIPT ID:	
+// AUTHOR				DATE		STATUS
+// -----------------	---------	--------------------------------------
+// Myron Agee			10/15/18	Version 1.00.000
+//************************************************************************/
+
+//########################################################################/
+//								* Library Files *
+//########################################################################/
+
+//NewLine
+{$Include NewLine.eds}
+
+//*###############################################################################*
+//*#                         	* Global Constants *                        	 #* 
+//*###############################################################################*
+CONST 
+	bDebug = true;	//Turn on or off for step through debug messages to display while running script.
+	Input_Path = 'F:\Scripting\#Development\CHB_ACADEMY_CHITTAGONG_LOGGING\Input\input.csv';
+	ports_path = 'F:\Scripting\#Development\CHB_ACADEMY_CHITTAGONG_LOGGING\Input\ports.csv';
+	ports_origin_path = 'F:\Scripting\#Development\CHB_ACADEMY_CHITTAGONG_LOGGING\Input\ports_origin.csv';
+	LogFolder = 'F:\Scripting\#Development\CHB_ACADEMY_CHITTAGONG_LOGGING\Logs\Log';	
+	LogPath = 'F:\Scripting\#Development\CHB_ACADEMY_CHITTAGONG_LOGGING\Logs\Log.txt';
+	UserLogPath = 'F:\Scripting\#Development\CHB_ACADEMY_CHITTAGONG_LOGGING\Logs\UserLog.txt';
+
+
+//*###############################################################################*
+//*#                         		* Objects *                        			 #* 
+//*###############################################################################*
+
+//Holds the values pulled in from the academy input file.
+Type
+	Input_Record = record				  //--CFIT FIELD NAME--//
+			VENDOR_CODE			: string; //UNUSED
+			VENDOR_NAME			: string; //UNUSED
+			PO					: string; //trace_No7
+			SKU					: string; //UNUSED
+			LINE				: string; //UNUSED
+			DESCRIPTION			: string; //UNUSED
+			ORDERED_QTY			: string; //UNUSED
+			SHIPPED_QTY			: string; //UNUSED
+			CARTON_COUNT		: String; //man_qty
+			MASTER_PACK			: string; //UNUSED
+			ORDERED_CBM			: string; //UNUSED
+			SHIPPED_CMB			: string; //volume
+			SHIPPED_KGS			: string; //weight
+			EXP_SAIL_DATE		: string; //voy_Flt_date
+			CARGO_RECV_DATE		: string; //UNUSED
+			DEPT				: string; //UNUSED
+			POL					: string; //airport_Origin
+			POL_ATD				: string; //UNUSED
+			POD					: string; //airport_Unlading
+			POD_ETA				: string; //post_Date2
+			POA					: string; //airport_Dest
+			POA_ETA				: string; //post_Date4
+			DC_NO				: string; //UNUSED
+			CARRIER				: string; //carrier
+			VESSEL				: string; //vessel_Name
+			VOYAGE				: string; //voyage_Flight
+			CONTAINER			: string; //trace_Type3
+			CONTAINER_SIZE		: string; //trace_Qty3
+			CONTAINER_TYPE		: string; //UNUSED
+			CONTAINER_SEAL		: string; //trace_Type4
+			LOAD_DELV_TYPE		: string; //UNUSED
+			BL					: string; //trace_Type5
+			eASN_CREATED_BY		: string; //UNUSED
+			INCO_TERMS			: string; //UNUSED
+end;
+
+Type	
+	Reference_Record = record
+			MBL					: string;
+			Ref					: string;
+			Ref_Type			: string;
+			Ref_Count			: string;
+			Ref_CO_Size			: string;
+end;
+
+//Holds all of the port codes needed for correction if the main values from "Input_Record" 
+Type	
+	Ports_Record = record
+			Name				: string;
+			Code				: string;
+			correct_code		: string;
+end;
+
+//Holds all of the available ports, and their details.
+Type	
+	Ports_Origin_Record = record
+			Origin				: string;
+			Origin_Name			: string;
+			CO					: string;
+			Origin_Port			: string;
+			Port_LAD_Code		: string;
+end;
+
+Type	
+	aryMBLTotal_Record = record
+			MBL					: string;
+			Total				: Integer;
+			
+end;
+
+//Type
+//	aryMBLTotal = Array[0..9999] of Array [1..2] of String;
+
+//*###############################################################################*
+//*#                         		* Variables *		                         #* 
+//*###############################################################################*
+VAR	
+
+//Standard
+
+	//Strings
+	vTotalQuantityString		: String;
+	vTotalWeightString			: String;
+	vTotalVolumeString			: String;
+	vPort						: string;
+	vAns						: string;
+	vDupAns						: string;
+	username					: string;
+
+	//Integers and Floating Points
+	vTotalQuantityIterate		: Integer;
+	vTotalQuantity				: Integer;
+	vTotalWeightIterate			: double;
+	vTotalWeight				: double;
+	vTotalVolumeIterate			: double;
+	vTotalVolume				: double;
+	MBLTotal					: Integer;
+
+	//Booleans
+	bMBExists 					: boolean;
+
+//Advanced
+	Input_File					: tTextFile;
+	Ports_File					: tTextFile;
+	Ports_Origin_File			: tTextFile;
+
+	
+//Arrays
+    //RefFile Array - Reference Files
+	aryRef			: Array[0..9999] of Input_Record;
+	aryPort			: Array[0..9999] of Ports_Record;
+	aryPortOrigin	: Array[0..9999] of Ports_Origin_Record;
+	aryMBLTotal 	: Array[0..9999] of aryMBLTotal_Record;
+
+//For Arrays and Iterators
+	i							: Integer;
+	j 							: Integer;
+	k							: Integer;
+	m							: Integer;
+	ref_Row						: Integer;
+	ref_LastRow					: Integer;
+	Ports_Row					: Integer;
+	Ports_LastRow				: Integer;
+	Ports_Origin_Row			: Integer;
+	Ports_Origin_LastRow		: Integer;
+	aryMBLTotal_LastRow			: Integer;
+
+//*###############################################################################*
+//*#                         * Procedures and Functions *                        #* 
+//*###############################################################################*
+
+//*******************************************************************************//
+//Function - "fDebugMsg"
+//
+//Description: Displays a message based on parameters that identify which part of 
+//the script you're in. Using Debug "Codes", a message will display if the bDebug
+//global variable is set to True.
+//*******************************************************************************//
+Function fDebugMsg(DebugType:String) : boolean;
+Begin
+    result := false;
+    Case DebugType of
+        'A1': If InputQuery('Debug Function','Reading Input File,' 
+            + NewLine + 'Values from file will be assigned to a variable next.' 
+            + NewLine + '(Debug: A1)',vAns) = false then exit;
+        'A2': If InputQuery('Debug Function','Values assigned to variable array.' 
+            + NewLine + 'Closing input file...' 
+            + NewLine + '(Debug: A2)',vAns) = false then exit;
+        'B1': If InputQuery('Debug Function','Input file is now closed.' 
+            + NewLine + 'Prompting user for number of MBL numbers.' 
+            + NewLine + '(Debug: B1)',vAns) = false then exit;
+        'C1': If InputQuery('Debug Function','Number of values captured.' 
+            + NewLine + 'Now looping through to fill in fields.' 
+            + NewLine + '(Debug: C1)',vAns) = false then exit;
+        'D1': If InputQuery('Debug Function','Now filling in initial static values.'   
+            + NewLine + '(Debug: D1)',vAns) = false then exit;
+        'D2': If InputQuery('Debug Function','Initial Values complete.' 
+            + NewLine + 'Now filling in captured values.' 
+            + NewLine + '(Debug: D2)',vAns) = false then exit;
+        'E1': If InputQuery('Debug Function','Locking in changes to create file.'  
+            + NewLine + '(Debug: E1)',vAns) = false then exit;
+		'E2': If InputQuery('Debug Function','Pulling back in file information via FIND (F2)'  
+		+ NewLine + '(Debug: E2)',vAns) = false then exit;
+		'E2a': If InputQuery('Debug Function','Filling in search values'  
+		+ NewLine + '(Debug: E2a)',vAns) = false then exit;		
+        'E3': If InputQuery('Debug Function','File found! Moving to Shipment Refs Screen.'  
+            + NewLine + '(Debug: E3)',vAns) = false then exit;
+        'F1': If InputQuery('Debug Function','Logging Shipment References tied to file number.' 
+            + NewLine + '(Debug: F1)',vAns) = false then exit;
+        'F2': If InputQuery('Debug Function','Shipment references have been successfully keyed in.' 
+            + NewLine + '(Debug: F2)',vAns) = false then exit;
+		'F3': If InputQuery('Debug Function','Moving back to Shiplog Screen.' 
+		+ NewLine + '(Debug: F1)',vAns) = false then exit;
+		'F4': If InputQuery('Debug Function','DEBUG HALT.' 
+		+ NewLine + '(Debug: F4)',vAns) = false then exit;
+    Else
+        ShowMessage('No known issue')
+    End;
+    result := true;
+End;
+
+//*******************************************************************************//
+//Function - "fDebugInputFile"
+//
+//Description: Displays the captured input of what is in the input file of the given
+//parameter. This is used to verify that your input file is accurately reading in
+//data.
+//*******************************************************************************//
+Function fDebugInputFile(DebugType:String) : boolean;
+Begin
+    result := false;
+    Case DebugType of
+        'Main': if inputquery('Main Input File Values Captured', 
+			+ NewLine + 'PO:				'	+ aryRef[1].PO 				
+			+ NewLine + 'Carton_Count:		'	+ aryRef[1].CARTON_COUNT	
+			+ NewLine + 'ship_CMB:	 		'	+ aryRef[1].SHIPPED_CMB		
+			+ NewLine + 'ship_kgs:	 		'	+ aryRef[1].SHIPPED_KGS		
+			+ NewLine + 'exp_sail_date:	'	+ aryRef[1].EXP_SAIL_DATE	
+			+ NewLine + 'POL:	 			'	+ aryRef[1].POL				
+			+ NewLine + 'POD:	 			'	+ aryRef[1].POD										
+			+ NewLine + 'POD_ETA:	 		'	+ aryRef[1].POD_ETA			
+			+ NewLine + 'POA:	 			'	+ aryRef[1].POA				
+			+ NewLine + 'POA_ETA:	 		'	+ aryRef[1].POA_ETA			
+			+ NewLine + 'Carrier:	 		'	+ aryRef[1].CARRIER			
+			+ NewLine + 'Vessel:	 		'	+ aryRef[1].VESSEL			
+			+ NewLine + 'Voyage:	 		'	+ aryRef[1].VOYAGE			
+			+ NewLine + 'Container:	 	'	+ aryRef[1].CONTAINER		
+			+ NewLine + 'Container_Size:	'	+ aryRef[1].CONTAINER_SIZE	
+			+ NewLine + 'Container_Seal:	'	+ aryRef[1].CONTAINER_SEAL	
+			+ NewLine + 'BL_Number:		'	+ aryRef[1].BL				
+			,vAns) = false then exit;
+
+        'Ports': If InputQuery('Correction Ports File Values Captured',
+			+ NewLine + 'Name: ' 				+ aryPort[1].name 
+            + NewLine + 'Code:	'				+ aryPort[1].code
+			+ NewLine + 'Correct Code:	'		+ aryPort[1].correct_code					
+			,vAns) = false then exit;
+
+        'Origin': if inputquery('Port Index File Values Captured', 
+			+ NewLine + 'Origin:	'			+ aryPortOrigin[1].Origin 				
+			+ NewLine + 'Origin_Name:	'		+ aryPortOrigin[1].Origin_Name	
+			+ NewLine + 'CO: '					+ aryPortOrigin[1].CO 
+            + NewLine + 'Origin_Port:	'		+ aryPortOrigin[1].Origin_Port
+			+ NewLine + 'Port_LAD_Code: '		+ aryPortOrigin[1].Port_LAD_Code			
+			,vAns) = false then exit;
+		'MBL': if inputquery('Port Index File Values Captured', 
+			+ NewLine + 'MBL:	'			+ aryMBLTotal[1].MBL 				
+			+ NewLine + 'Total:	'			+ inttostr(aryMBLTotal[1].Total)				
+			,vAns) = false then exit;
+    Else
+        ShowMessage('No values captured')
+    End;
+    result := true;
+End;
+
+//*******************************************************************************//
+//Function - "fPortCheck"
+//
+//Description: Checks to see if the supplied Port falls under the list of maintained
+//items that need to be translated to the corrected port.
+//*******************************************************************************//
+
+Function fPortCheck(vPort : String): string;
+    Begin
+        for i:= 1 to Ports_LastRow do
+			Begin
+				if vPort = aryPort[i].code then
+					Result:= aryPort[1].correct_code;
+			End;
+    End;
+
+//*******************************************************************************//
+//Function - "fInsertRef"
+//
+//Description: Validates you are on the first page, then checks to see if the MB
+//already listed as a reference. If MB was not found on list of references, then it
+//qualifies as one to input into the reference list.
+//*******************************************************************************//
+
+Function fInsertRef(vRefType, vRefNum, vNullA, vNullB : String): String;
+Begin
+	
+	bMBExists:= false;
+
+	//Starts at the first page of refs
+	While not messagescontain('This is the first page') Do Begin
+		DoAction('PF6')
+	End;
+
+	//Checker for ensuring the passed parameters are or aren't listed as refs already
+		For j:= 1 to 15 do 
+		Begin
+			if trim(getvalue('trace_No' + inttostr(j))) = trim(vRefNum) then 
+				Begin
+					bMBExists:= true;
+					j:= 16;
+				End
+			else
+				Begin
+					if (j = 15) and (trim(getvalue('trace_No' + inttostr(j))) <> '') then
+					Begin
+						DoAction('PF5');
+						if messagescontain('This is the last page') then
+							j:= 16
+						else
+							j:= 1;
+					End;
+				End;
+		End;
+	//End;
+
+	//Starts at the first page of refs
+	While not messagescontain('This is the first page') Do Begin
+		DoAction('PF6')
+	End;
+
+	//Checks to see if boolean/MB is false, if so input that MB being checked.
+	if (bMBExists = false) then
+	Begin
+		For k:= 1 to 15 do 
+		Begin
+			if trim(getvalue('trace_Type' + inttostr(k)))= '' then
+				Begin
+					//enter ref values
+					SetValue('trace_Type' + inttostr(k), vREFType);
+					SetValue('trace_No' + inttostr(k), vRefNum);
+					SetValue('trace_Qty' + inttostr(k), vNullA);
+					SetValue('trace_Unit' + inttostr(k), vNullB);
+					doaction('PF1'); //ADD/MODIFY
+					k:= 16;
+				End
+			else if (k = 15) and ('trace_No' + inttostr(k) <> '') then
+				Begin
+				doaction('PF5'); //NEXT PAGE
+				k:= 1;
+				End;	
+		End;
+
+	Result:= '';
+	End;
+	
+End;
+
+//*******************************************************************************//
+//Procedure - "Log"
+//
+//Description: Validates you are on the first page, then checks to see if the MB
+//already listed as a reference. If MB was not found on list of references, then it
+//qualifies as one to input into the reference list.
+//*******************************************************************************//
+
+Procedure Log(logMessage: String);
+Var
+    LogFile : TTextFile;
+
+begin
+    AssignFile(LogFile, LogPath);
+    Append(LogFile);
+    WriteLn(LogFile, FormatDateTime('mm/dd/yy -- hh:mm:ss' , Now()) + ' -- ' + logMessage);
+    Close(LogFile);
+end;
+
+//*******************************************************************************//
+//Procedure - "AssignUserName"
+//
+//Description: Validates you are on the first page, then checks to see if the MB
+//already listed as a reference. If MB was not found on list of references, then it
+//qualifies as one to input into the reference list.
+//*******************************************************************************//
+
+Procedure AssignUserName();
+Var
+	usernameFile : TTextFile;
+	err : boolean;
+
+Begin
+	Try
+		AssignFile(usernameFile, UserLogPath);
+		Reset(usernameFile);
+		username := read(usernameFile);
+		Close(usernameFile);
+		err := false;
+	Except
+		err := true;
+	End;
+	If (err = true) then
+		Begin
+			username := InputBox('User Name', 'Please enter your Username:', '');
+			AssignFile(usernameFile, UserLogPath);
+			Rewrite(usernameFile);
+			WriteLn(usernameFile, username);
+			Close(usernameFile);
+		End;
+End;
+
+//*###############################################################################*
+//*#                         * Preprocess Directives *                           #* 
+//*###############################################################################*
+
+Begin
+
+//Logging Execution
+AssignUserName;
+Log('Script is starting...');
+
+//Simple Variable Initializations
+	vTotalQuantityIterate := 0
+	vTotalQuantityString := '0';
+
+	vTotalWeightIterate := 0.0
+	vTotalWeightString := '0';
+	vTotalWeight := 0;
+
+	vTotalVolumeIterate := 0.0
+	vTotalVolumeString := '0';
+	vTotalVolume := 0;
+
+	vAns := ''
+	vDupAns := ''
+
+// --------------------- Start Read Input file -------------------------//
+	ShowMessage('Reading values from Academy Chittagong Spreadsheet')
+	
+	If bDebug = true Then if fDebugMsg('A1') = false then exit;
+
+	AssignFile(Input_File, Input_Path);
+	Reset(Input_File);
+	While Not EOF(Input_File) Do 
+	Begin
+		Read(Input_File);										//VENDOR_CODE-UNUSED
+		Read(Input_File);										//VENDOR_NAME-UNUSED
+		aryRef[ref_Row].PO				:= Read(Input_File);
+		Read(Input_File);										//SKU #-UNUSED
+		Read(Input_File);										//LINE#-UNUSED
+		Read(Input_File);										//DESCRIPTION-UNUSED
+		Read(Input_File);										//ORDERED_QTY-UNUSED
+		Read(Input_File);										//SHIPPED_QTY-UNUSED
+		aryRef[ref_Row].CARTON_COUNT	:= Read(Input_File);	//CARTON_COUNT
+		Read(Input_File);										//MASTER_PACK-UNUSED
+		Read(Input_File);										//ORDERED_CBM-UNUSED
+		aryRef[ref_Row].SHIPPED_CMB		:= Read(Input_File);	//SHIPPER_CMB
+		aryRef[ref_Row].SHIPPED_KGS		:= Read(Input_File);	//SHIPPED_KGS
+		aryRef[ref_Row].EXP_SAIL_DATE	:= Read(Input_File);
+		Read(Input_File);										//CARGO_RECV_DATE-UNUSED
+		Read(Input_File);										//DEPT#-UNUSED
+		aryRef[ref_Row].POL				:= Read(Input_File);
+		Read(Input_File);										//POL_ATD-UNUSED
+		aryRef[ref_Row].POD				:= Read(Input_File);
+		aryRef[ref_Row].POD_ETA			:= Read(Input_File);
+		aryRef[ref_Row].POA				:= Read(Input_File);
+		aryRef[ref_Row].POA_ETA			:= Read(Input_File);
+		Read(Input_File);										//DC_NO-UNUSED
+		aryRef[ref_Row].CARRIER			:= Read(Input_File);
+		aryRef[ref_Row].VESSEL			:= Read(Input_File);
+		aryRef[ref_Row].VOYAGE			:= Read(Input_File);
+		aryRef[ref_Row].CONTAINER		:= Read(Input_File);
+		aryRef[ref_Row].CONTAINER_SIZE	:= Read(Input_File);
+		Read(Input_File);										//CONTAINER_TYPE-UNUSED
+		aryRef[ref_Row].CONTAINER_SEAL	:= Read(Input_File);
+		Read(Input_File);										//LOAD_DELV_TYPE-UNUSED
+		aryRef[ref_Row].BL				:= Read(Input_File);
+		Read(Input_File);										//eASN_CREATED_BY-UNUSED
+		Read(Input_File);										//INCO_TERMS-UNUSED
+		
+		ref_Row := ref_Row + 1;
+	end;
+	
+	ref_LastRow := ref_Row -1;
+
+Close(Input_File);
+// --------------------- End Read Ports file -----------------------------//
+
+	If bDebug = true Then if fDebugInputFile('Main') = false then exit;
+
+// --------------------- Start Read Ports file -------------------------//
+Assignfile(Ports_File, Ports_Path);
+Reset(Ports_File);
+While Not EOF(Ports_File) Do 
+	Begin
+		aryPort[Ports_Row].name 					:= Read(Ports_File)
+		aryPort[Ports_Row].code 					:= Read(Ports_File)
+		aryPort[Ports_Row].correct_code 			:= Read(Ports_File)
+		
+		Ports_Row := Ports_Row + 1
+	end;
+	
+	Ports_LastRow := Ports_Row -1
+
+Close(Ports_File);
+// --------------------- End Read Ports file -----------------------------//
+	
+	If bDebug = true Then if fDebugInputFile('Ports') = false then exit;
+
+// --------------------- Start Read Ports_Origin file --------------------//
+Assignfile(Ports_Origin_File, Ports_Origin_Path);
+Ports_Origin_Row := 0;
+Reset(Ports_Origin_File);
+
+While Not EOF(Ports_Origin_File) Do 
+	Begin
+		aryPortOrigin[Ports_Origin_Row].Origin 			:= Read(Ports_Origin_File)
+		aryPortOrigin[Ports_Origin_Row].Origin_Name 	:= Read(Ports_Origin_File)
+		aryPortOrigin[Ports_Origin_Row].CO 				:= Read(Ports_Origin_File)
+		aryPortOrigin[Ports_Origin_Row].Origin_Port 	:= Read(Ports_Origin_File)
+		aryPortOrigin[Ports_Origin_Row].Port_LAD_Code 	:= Read(Ports_Origin_File)
+		
+		Ports_Origin_Row := Ports_Origin_Row + 1
+	end;
+	
+	Ports_Origin_LastRow := Ports_Origin_Row -1
+
+Close(Ports_Origin_File);
+// --------------------- End Read Ports_Origin file ---------------------//
+
+If bDebug = true Then if fDebugInputFile('Origin') = false then exit;
+
+// --------------------- MBL Total Array Population ---------------------//
+//AssignFile(Input_File, Input_Path);
+//Reset(Input_File);
+
+//For i := 2 to ref_LastRow do
+	//Begin
+		//aryMBLTotal[i].MBL:= Read(Input_File);
+	//End;
+j:= 1;
+
+For i:= 1 to ref_LastRow do
+Begin
+	bMBExists := false;
+	For k:= 1 to j do
+	Begin
+		If (aryRef[i].BL = aryMBLTotal[k].MBL) then
+			Begin
+				bMBExists := true;
+				m:= k;
+			End;
+	End;
+		If bMBExists = true then
+			Begin
+				aryMBLTotal[m].Total:= aryMBLTotal[m].Total + strtoint(aryRef[i].CARTON_COUNT);
+			End
+		else if bMBExists = false then
+			Begin
+				aryMBLTotal[j].MBL:= aryRef[i].BL;
+				aryMBLTotal[j].Total:= strtoint(aryRef[i].CARTON_COUNT);
+				j:= j + 1;
+			End;
+End;
+
+aryMBLTotal_LastRow:= j - 1;
+
+//Close(Input_File);
+
+	If bDebug = true Then if fDebugInputFile('MBL') = false then exit;
+// --------------------- End MBL Total Array Population ---------------------//
+
+    //*###############################################################################*
+    //*#                         * Main Script Process *                             #* 
+    //*###############################################################################*
+	//Fill out the Shiplog Screen with Static Info
+
+	If bDebug = true Then if fDebugMsg('D1') = false then exit;
+
+		//Static Values
+		SetValue('invoice_Type',		'7');
+		SetValue('ship_Type',			'F');
+		SetValue('client_No_Import',	'G0233042');
+		SetValue('client_No_Cnee',		'G0233042');
+		setvalue('billed_Amt', 			'75.00');
+		setvalue('billed_Date', 		'X');
+		setvalue('client_No_Rev', 		'G0233042');
+		setvalue('client_No', 			'G0233042');
+		setvalue('my_We_Deliver', 		'N');
+		setvalue('local_Clearing', 		'Y');
+		setvalue('customs_Category', 	'S');
+		setvalue('hazmat', 				'N');
+		setvalue('man_Unit', 			'CTNS');
+		setvalue('desc_Of_Goods', 		'F.A.K.');
+		setvalue('airport_origin', 		'CGP');
+		setvalue('Agent_broker', 		'N');
+		setvalue('voyage_flight', 		'XXXX');
+		SetValue('airport_Origin', 		'CGP');
+		SetValue('trace_Qty3', 			'1');
+		SetValue('trace_Type4',			'SN');
+		SetValue('trace_Type7',			'PO');
+
+		If bDebug = true Then if fDebugMsg('D2') = false then exit;
+
+		//Captured Values
+		delete(aryRef[1].POD,1,2)
+		SetValue('airport_Unlading', 	fPortCheck(aryRef[1].POD));
+		
+		delete(aryRef[1].POA,1,2) 		//Formatting for Date
+		SetValue('airport_Dest', 		fPortCheck(aryRef[1].POA));
+			
+		SetValue('post_Date2', 			FormatDateTime('mm/dd/yy', StrToDate(aryRef[1].POD_ETA)));		
+		SetValue('post_Date4', 			FormatDateTime('mm/dd/yy', StrToDate(aryRef[1].POA_ETA)));	
+		SetValue('voy_Flt_date', 		FormatDateTime('mm/dd/yy', StrToDate(aryRef[1].EXP_SAIL_DATE)));
+		SetValue('carrier', 			aryRef[1].CARRIER);		
+		SetValue('vessel_Name', 		aryRef[1].VESSEL);		
+		SetValue('voyage_Flight', 		aryRef[1].VOYAGE);		
+		SetValue('trace_No3',	 		aryRef[1].CONTAINER);
+		SetValue('trace_Unit3',			aryRef[1].CONTAINER_SIZE);
+		SetValue('trace_No4',	 		aryRef[1].CONTAINER_SEAL);
+		SetValue('trace_No5',	 		aryMBLTotal[1].MBL);
+		SetValue('trace_No7', 			aryRef[1].PO);		
+		
+		//---------------------------PART 2--------------------------------//
+
+		//Calculate totals of Quantity, Weight, and Volume
+		{vTotalQuantity := strtoint(aryRef[1].CARTON_COUNT);
+		For i := 2 to ref_LastRow do
+			 Begin
+				vTotalQuantity:= vTotalQuantity + strtoint(aryRef[1].CARTON_COUNT);
+				
+				//vTotalQuantity := strtoint(aryRef[i].CARTON_COUNT);
+				//vTotalQuantityIterate := vTotalQuantity + strtoint(aryRef[i].CARTON_COUNT);
+			 End;}
+
+		vTotalWeight:= 0;
+		vTotalVolume:= 0;
+
+		For i := 1 to ref_LastRow do
+			Begin
+				vTotalWeight := vTotalWeight + strtofloat(aryRef[i].SHIPPED_KGS);
+				vTotalVolume := vTotalVolume + strtofloat(aryRef[i].SHIPPED_CMB);
+			End;
+
+		//Input summed values into Quantity, Weight, and Volume fields.
+		SetValue('man_qty', trim(inttostr(aryMBLTotal[1].Total))); //Quantity
+		SetValue('weight', 	trim(floattostr(vTotalWeight))); //Weight
+		SetValue('weight_Units', 'K');
+		SetValue('volume',	trim(floattostr(vTotalVolume))); //Volume
+
+		If bDebug = true Then if fDebugMsg('E1') = false then exit;
+		DoAction('PF1'); //Lock in the values to create the file
+
+		//Duplicate MB prompt resolution
+		while formname = 'askimportctxcontroller' do 
+		begin
+			If InputQuery('Duplicate Data', 'This MB# has already been detected in another file, '
+				+ 'would you like to continue processing this file with the same MB#?' 
+				+ NewLine + 'Click ok to continue, or Cancel to stop', vDupAns) = True Then
+			Begin
+				SetValue('DEFAULT_ANSWER', 'Y');
+				DoAction('Enter');
+			End
+		Else
+			Begin
+				SetValue('DEFAULT_ANSWER', 'N');
+				DoAction('Enter');
+			End;
+		End;
+
+		If bDebug = true Then if fDebugMsg('E2') = false then exit;
+		
+		//------------------------------PART 3--------------------------//
+
+		DoAction('PF3'); //Clear Input
+		DoAction('PF2'); //Find
+
+		If bDebug = true Then if fDebugMsg('E2a') = false then exit;
+		SetValue('first_Ship', FormatDateTime('mm/dd/yy', Now()));
+		SetValue('last_Ship', FormatDateTime('mm/dd/yy', Now()));
+		SetValue('invoice_Type',		'7');
+		SetValue('ship_Type',			'F');
+		setvalue('client_No_Rev', 		'G0233042');
+		setvalue('client_No', 			'G0233042');
+		SetValue('client_No_Import',	'G0233042');
+		SetValue('client_No_Cnee',		'G0233042');
+		setvalue('desc_Of_Goods', 		'F.A.K.');
+		setvalue('airport_origin', 		'CGP');
+		SetValue('trace_Type', 			'MB')
+		SetValue('trace_No',	 		aryRef[2].BL);
+		DoAction('PF2') //Searches using supplied parameters (F2)
+		
+		If bDebug = true Then if fDebugMsg('E3') = false then exit;
+		DoAction('PF7') //Shows the found record
+		
+		//Navigate to the References Screen
+		DoAction('PF7'); //Hit Other Keys (F7)
+		DoAction('PF8'); //Hit Show References (F8)
+
+		If bDebug = true Then if fDebugMsg('F1') = false then exit;
+
+		For i := 2 to ref_LastRow do
+		Begin
+			fInsertRef('PO', aryRef[i].PO, '', '');
+			fInsertRef('CO', aryRef[i].CONTAINER, '1', '40H');
+		End;
+
+		For i := 1 to aryMBLTotal_LastRow do
+		Begin
+			fInsertRef('MB', aryMBLTotal[i].MBL, inttostr(aryMBLTotal[i].Total), 'CTNS');
+		End;		
+
+		If bDebug = true Then if fDebugMsg('F2') = false then exit;
+		If bDebug = true Then if fDebugMsg('F3') = false then exit;
+
+		DoAction('PF8'); //Moving back to ShipLog screen.
+
+		//DoAction('PF3'); //Clear the screen of input values
+
+End.

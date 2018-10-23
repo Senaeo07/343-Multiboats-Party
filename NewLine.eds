@@ -1,0 +1,10 @@
+//*******************************************************************************//
+//Function - "NewLine"
+//
+//Description: Creates a line break in a string of text which needs to wrap around.
+//*******************************************************************************//
+
+Function NewLine(): String;
+Begin
+    Result := Chr(13) + Chr(10);
+End;
