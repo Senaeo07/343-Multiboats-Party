@@ -706,15 +706,27 @@ aryMBLTotal_LastRow:= j - 1;
 
 		If bDebug = true Then if fDebugMsg('F1') = false then exit;
 
-		For i := 2 to ref_LastRow do
-		Begin
-			fInsertRef('PO', aryRef[i].PO, '', '');
-			fInsertRef('CO', aryRef[i].CONTAINER, '1', '40H');
-		End;
-
+		
+		//Enters MB References
 		For i := 1 to aryMBLTotal_LastRow do
 		Begin
 			fInsertRef('MB', aryMBLTotal[i].MBL, inttostr(aryMBLTotal[i].Total), 'CTNS');
+		End;
+
+		//Enters FA - YUSEN reference
+		fInsertRef('FA', 'YUSEN', '', '');
+
+		//Enters CO References
+		For i := 1 to aryMBLTotal_LastRow do
+		Begin
+			fInsertRef('CO', aryRef[i].CONTAINER, '1', '40H');
+		End;
+
+		//Enters PO References
+		For i := 2 to ref_LastRow do
+		Begin
+			fInsertRef('PO', aryRef[i].PO, '', '');
+			
 		End;		
 
 		If bDebug = true Then if fDebugMsg('F2') = false then exit;
